@@ -1,0 +1,200 @@
+---
+title: "ESG Stock Returns Prediction"
+author: "Yousra Belgaid"
+date: "2024-12-17"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(dplyr)
+library(readr)
+library(caret)
+library(quantmod)
+library(ggplot2)
+
+# Load datasets
+historical <- read_csv("/Users/yousrabelgaid/Desktop/Stats\ 486/historical.csv")     # Historical stock data
+esg_data <- read_csv("/Users/yousrabelgaid/Desktop/Stats\ 486/testingesg.csv")      # ESG scores data
+
+# Standardize 'Name' column to uppercase
+historical <- historical %>%
+  mutate(Name = toupper(Name))
+
+testing_esg <- esg_data %>%
+  mutate(NAME = toupper(Name))  # Ensure column consistency
+
+
+# View the datasets
+head(historical)
+head(esg_data)
+```
+
+```{r}
+# Check for duplicate Names in each dataset
+cat("Duplicates in historical dataset:")
+print(sum(duplicated(historical$Name)))
+
+cat("Duplicates in testing ESG dataset:")
+print(sum(duplicated(testing_esg$NAME)))
+
+# Verify how many matching Names exist between both datasets
+common_names <- intersect(historical$Name, testing_esg$NAME)
+cat("Number of common Names:", length(common_names))
+```
+
+```{r}
+# Merge datasets and keep only one Name column
+merged_data <- historical %>%
+  inner_join(testing_esg, by = "Name") %>%  # Join by Name column
+  select(Name, Net_Chg, Tot_Ret, Last_Px, Low_Date, Low, High_Date, High, 
+         Volume, Market_Cap, Env_Scr, Gov_Scr, Soc_Scr)  # Select desired columns
+
+# View the cleaned merged data
+head(merged_data)
+
+dim(merged_data)  # Check number of rows and columns
+
+merged_data$Last_Px <- as.numeric(merged_data$Last_Px)
+```
+
+Data Prepration: 
+```{r}
+# Remove rows with NA values using filter()
+model_data <- merged_data %>%
+  select(Tot_Ret, Env_Scr, Gov_Scr, Soc_Scr, Net_Chg, Volume, Market_Cap) %>%
+  filter(
+    !is.na(Tot_Ret) &
+    !is.na(Env_Scr) &
+    !is.na(Gov_Scr) &
+    !is.na(Soc_Scr) &
+    !is.na(Net_Chg) &
+    !is.na(Volume) &
+    !is.na(Market_Cap)
+  )
+
+# Check the cleaned dataset
+head(model_data)
+
+# View summary
+summary(model_data)
+```
+
+Split the dataset training and Testing: 
+```{r}
+# Load caret for model training
+library(caret)
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Split the data
+train_index <- createDataPartition(model_data$Tot_Ret, p = 0.8, list = FALSE)
+train_set <- model_data[train_index, ]
+test_set <- model_data[-train_index, ]
+
+# Check dimensions
+cat("Training Set Rows:", nrow(train_set), "\nTesting Set Rows:", nrow(test_set), "\n")
+```
+
+
+
+First model used- Linear Regression Model: 
+```{r}
+# Train the model
+model <- train(
+  Tot_Ret ~ Env_Scr + Gov_Scr + Soc_Scr + Net_Chg + Volume + Market_Cap,
+  data = train_set,
+  method = "lm",
+  trControl = trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+)
+
+# View model summary
+summary(model$finalModel)
+```
+
+Prediction on Total return (Target Variable)
+```{r}
+# Predict Tot_Ret on test set
+test_set$Predicted_Tot_Ret <- predict(model, newdata = test_set)
+
+# View predictions alongside actual values
+head(test_set[, c("Tot_Ret", "Predicted_Tot_Ret")])
+```
+
+Evaluate Model Performance + Graph
+```{r}
+library(ggplot2)
+
+# Plot actual vs predicted Tot_Ret
+ggplot(test_set, aes(x = Tot_Ret, y = Predicted_Tot_Ret)) +
+  geom_point(color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  labs(title = "Actual vs Predicted Total Returns",
+       x = "Actual Tot_Ret",
+       y = "Predicted Tot_Ret") +
+  theme_minimal()
+```
+
+Train Second Model- Random Forest Model: 
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+# Train Random Forest model
+rf_model <- train(
+  Tot_Ret ~ Env_Scr + Gov_Scr + Soc_Scr + Net_Chg + Volume + Market_Cap,
+  data = train_set,
+  method = "rf",  # Random Forest
+  trControl = trainControl(method = "cv", number = 5),  # 5-fold cross-validation
+  importance = TRUE  # Track feature importance
+)
+
+# Print the model results
+print(rf_model)
+```
+
+```{r}
+# Predictions on test set
+rf_predictions <- predict(rf_model, newdata = test_set)
+
+# Calculate performance metrics
+rf_rmse <- RMSE(rf_predictions, test_set$Tot_Ret)
+rf_mae <- MAE(rf_predictions, test_set$Tot_Ret)
+rf_r2 <- R2(rf_predictions, test_set$Tot_Ret)
+
+# Display performance metrics
+cat("Random Forest Performance Metrics:\n")
+cat("RMSE:", rf_rmse, "\n")
+cat("MAE:", rf_mae, "\n")
+cat("R-squared:", rf_r2, "\n")
+```
+
+```{r}
+# Feature importance plot
+importance <- varImp(rf_model, scale = TRUE)
+plot(importance, main = "Feature Importance")
+```
+
+
+Data Visualization
+```{r}
+# Add predictions to test set
+test_set$RF_Predicted_Tot_Ret <- rf_predictions
+
+# Plot actual vs predicted Tot_Ret for Random Forest
+ggplot(test_set, aes(x = Tot_Ret, y = RF_Predicted_Tot_Ret)) +
+  geom_point(color ="blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "Random Forest: Actual vs Predicted Total Returns",
+    x = "Actual Tot_Ret",
+    y = "Predicted Tot_Ret"
+  ) +
+  theme_minimal()
+```
+
